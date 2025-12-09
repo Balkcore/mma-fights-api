@@ -3,41 +3,91 @@ import { gotScraping } from "got-scraping";
 
 const baseUrl = "https://www.tapology.com";
 
+// const scrapeEvents = async () => {
+// 	try {
+// 		const response = await gotScraping({
+// 			url: `${baseUrl}/fightcenter?group=major&schedule=upcoming`,
+// 			proxyUrl: process.env.PROXY_URL,
+// 		});
+
+// 		if (response.statusCode !== 200) {
+// 			throw new Error("Failed to scrape data from Tapology");
+// 		}
+
+// 		const $ = cheerio.load(response.body);
+
+// 		const majorOrgs = ["UFC", "PFL", "BELLATOR", "ONE", "RIZIN"];
+
+// 		const events = $(".fightcenterEvents > div")
+// 			.toArray()
+// 			.map((el) => {
+// 				const eventLink = $(el).find(".promotion a");
+// 				const date = $(el).find(".promotion span").eq(3).text().trim();
+// 				return {
+// 					title: eventLink.first().text().trim(),
+// 					date,
+// 					link: baseUrl + eventLink.first().attr("href"),
+// 				};
+// 			})
+// 			// .filter((event) => majorOrgs.some((org) => event.title.toUpperCase().includes(org)) && !event.title.toUpperCase().includes("ONE FRIDAY FIGHTS"))
+// 			.filter((event) => !event.title.toUpperCase().includes("ONE FRIDAY FIGHTS"));
+// 			// .slice(0, 10); // Limit to 10 events
+
+// 		return events;
+// 	} catch (error) {
+// 		console.error("Scraping error:", error);
+// 		throw new Error("Error during scraping: ", error);
+// 	}
+// };
+
 const scrapeEvents = async () => {
-	try {
-		const response = await gotScraping({
-			url: `${baseUrl}/fightcenter?group=major&schedule=upcoming`,
-			proxyUrl: process.env.PROXY_URL,
-		});
+    try {
+        const response = await gotScraping({
+            url: `${baseUrl}/fightcenter?group=major&schedule=upcoming`,
+            proxyUrl: process.env.PROXY_URL,
+        });
 
-		if (response.statusCode !== 200) {
-			throw new Error("Failed to scrape data from Tapology");
-		}
+        if (response.statusCode !== 200) {
+            throw new Error("Failed to scrape data from Tapology");
+        }
 
-		const $ = cheerio.load(response.body);
+        const $ = cheerio.load(response.body);
 
-		const majorOrgs = ["UFC", "PFL", "BELLATOR", "ONE", "RIZIN"];
+        const events = $(".fightcenterEvents > div")
+            .toArray()
+            .map((el) => {
+                const eventLink = $(el).find(".promotion a").first();
+                const href = eventLink.attr("href"); // <-- critical
 
-		const events = $(".fightcenterEvents > div")
-			.toArray()
-			.map((el) => {
-				const eventLink = $(el).find(".promotion a");
-				const date = $(el).find(".promotion span").eq(3).text().trim();
-				return {
-					title: eventLink.first().text().trim(),
-					date,
-					link: baseUrl + eventLink.first().attr("href"),
-				};
-			})
-			.filter((event) => majorOrgs.some((org) => event.title.toUpperCase().includes(org)) && !event.title.toUpperCase().includes("ONE FRIDAY FIGHTS"))
-			.slice(0, 10); // Limit to 10 events
+                // ❌ Geen href = geen geldig event blok
+                if (!href) {
+                    return null;
+                }
 
-		return events;
-	} catch (error) {
-		console.error("Scraping error:", error);
-		throw new Error("Error during scraping: ", error);
-	}
+                const date = $(el).find(".promotion span").eq(3).text().trim();
+
+                return {
+                    title: eventLink.text().trim(),
+                    date,
+                    link: baseUrl + href,
+                };
+            })
+            // ❌ Null items eruit halen
+            .filter((ev) => ev !== null)
+
+            // ❌ ONE Friday Fights behalve laten
+            .filter((event) => !event.title.toUpperCase().includes("ONE FRIDAY FIGHTS"));
+
+            // Optional: limit
+            // .slice(0, 30);
+
+        return events;
+    } catch (error) {
+        console.error("Scraping error:", error);
+        throw new Error("Error during scraping: " + error.message);
+    }
 };
+
 
 const scrapeEventDetails = async (events) => {
 	try {
