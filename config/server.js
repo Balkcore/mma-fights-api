@@ -1,86 +1,149 @@
+// config/server.js
 import express from "express";
 import cors from "cors";
-import compression from "compression";
-import morgan from "morgan";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
 import { scrapeEvents, scrapeEventDetails } from "../utils/scrape.js";
 
-// Get the current directory path (works with ES modules)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const app = express();
 
-// Define paths based on environment
-const isProduction = process.env.NODE_ENV === "production";
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
-// Use Railway.app volume path in production, local path in development
-const DATA_DIR = isProduction ? "/data" : path.join(__dirname, "..", "data");
-const DATA_FILE_PATH = path.join(DATA_DIR, "fights.data");
+// Trigger-key uit .env
+const TRIGGER_KEY = process.env.TRIGGER_KEY;
 
-// Initialize the data directory if needed
-async function ensureDirectoryExists() {
-	try {
-		await fs.mkdir(DATA_DIR, { recursive: true });
-	} catch (err) {
-		// Ignore if directory already exists
-		if (err.code !== "EEXIST") {
-			console.error(`Error creating directory: ${err.message}`);
-		}
-	}
-}
-
-export const createServer = () => {
-	const app = express();
-
-	app.use(morgan("tiny"));
-	app.use(express.json());
-	app.use(cors());
-	app.use(compression());
-
-	app.post("/scrape", async (req, res) => {
-		const { key } = req.body;
-		if (!key || key !== process.env.TRIGGER_KEY) {
-			return res.status(401).send({ error: true, message: "Invalid trigger key" });
-		}
-
-		try {
-			// Ensure the directory exists before writing
-			await ensureDirectoryExists();
-
-			const events = await scrapeEvents();
-			const eventDetails = await scrapeEventDetails(events);
-
-			const fileData = {
-				data: eventDetails,
-				updatedAt: new Date(),
-			};
-
-			// Convert to Buffer to avoid string encoding issues
-			const buffer = Buffer.from(JSON.stringify(fileData));
-			await fs.writeFile(DATA_FILE_PATH, buffer);
-
-			return res.status(200).send({ error: false, message: "Scraping and updating completed" });
-		} catch (err) {
-			console.error("Error during scraping process:", err);
-			return res.status(500).send({ error: true, message: "Error during scraping process" });
-		}
-	});
-
-	app.get("/", async (req, res) => {
-		try {
-			const buffer = await fs.readFile(DATA_FILE_PATH);
-			const data = JSON.parse(buffer.toString());
-			return res.status(200).send(data);
-		} catch (err) {
-			console.error("Error retrieving data:", err);
-			return res.status(404).send({ error: true, message: "Data not found" });
-		}
-	});
-
-	app.get("/health", (req, res) => {
-		res.status(200).send("OK");
-	});
-
-	return app;
+// In-memory cache
+let cache = {
+  data: [],
+  updatedAt: null,
+  stats: {
+    events: 0,
+    eventsWithFights: 0,
+  },
 };
+
+/**
+ * Simple health / data endpoint
+ * Geeft de laatst geslaagde scrape terug
+ */
+app.get("/", (req, res) => {
+  res.json({
+    data: cache.data,
+    updatedAt: cache.updatedAt,
+    stats: cache.stats,
+  });
+});
+
+/**
+ * POST /scrape
+ * Body: { "key": "...." }
+ *
+ * - valideert trigger key
+ * - draait scrapeEvents + scrapeEventDetails
+ * - overschrijft cache alleen als er ≥1 event mét fights is
+ */
+app.post("/scrape", async (req, res) => {
+  try {
+    const key = req.body?.key;
+
+    if (!TRIGGER_KEY) {
+      console.error("[scrape] TRIGGER_KEY is not configured in environment");
+      return res.status(500).json({
+        error: true,
+        message: "TRIGGER_KEY not configured on server",
+      });
+    }
+
+    if (key !== TRIGGER_KEY) {
+      console.warn("[scrape] invalid trigger key received");
+      return res.status(401).json({
+        error: true,
+        message: "Invalid trigger key",
+      });
+    }
+
+    console.log("[scrape] triggered");
+
+    // 1) Events uit lijsten halen (MMA + boxing)
+    const events = await scrapeEvents();
+    const totalEvents = Array.isArray(events) ? events.length : 0;
+    console.log("[scrape] events from lists:", totalEvents);
+
+    if (!Array.isArray(events) || totalEvents === 0) {
+      console.warn(
+        "[scrape] no events found from listings – keeping previous dataset"
+      );
+      return res.json({
+        error: false,
+        message:
+          "Scrape completed but no events found from listings, previous data kept",
+        stats: {
+          events: totalEvents,
+          eventsWithFights: 0,
+        },
+        keptPrevious: true,
+      });
+    }
+
+    // 2) Per event de fight-details ophalen
+    const eventsWithFights = await scrapeEventDetails(events);
+    const withFightsCount = Array.isArray(eventsWithFights)
+      ? eventsWithFights.length
+      : 0;
+
+    console.log(
+      "[scrape] events=",
+      totalEvents,
+      "→ withFights=",
+      withFightsCount
+    );
+
+    if (!withFightsCount) {
+      console.warn(
+        "[scrape] 0 events with fights – keeping previous dataset (NOT overwriting cache)"
+      );
+      return res.json({
+        error: false,
+        message:
+          "Scrape completed but found 0 events with fights, previous data kept",
+        stats: {
+          events: totalEvents,
+          eventsWithFights: 0,
+        },
+        keptPrevious: true,
+      });
+    }
+
+    // 3) Cache bijwerken (alleen als er minstens 1 event met fights is)
+    cache.data = eventsWithFights;
+    cache.updatedAt = new Date().toISOString();
+    cache.stats = {
+      events: totalEvents,
+      eventsWithFights: withFightsCount,
+    };
+
+    console.log(
+      "[scrape] cache updated:",
+      withFightsCount,
+      "events with fights at",
+      cache.updatedAt
+    );
+
+    return res.json({
+      error: false,
+      message: "Scraping and updating completed",
+      stats: cache.stats,
+      updatedAt: cache.updatedAt,
+    });
+  } catch (err) {
+    console.error("[scrape] fatal error", err);
+    return res.status(500).json({
+      error: true,
+      message: "Error during scraping process",
+    });
+  }
+});
+
+// Export app – index.js doet de listen()
+export default app;
