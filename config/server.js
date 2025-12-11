@@ -1,4 +1,5 @@
 // config/server.js
+console.log("Loaded TRIGGER_KEY:", process.env.TRIGGER_KEY);
 import express from "express";
 import cors from "cors";
 import { scrapeEvents, scrapeEventDetails } from "../utils/scrape.js";
