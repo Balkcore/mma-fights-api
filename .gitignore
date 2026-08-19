@@ -4,4 +4,7 @@
 # ignore node_modules directory
 node_modules/
 
+# Captured upstream HTML can change frequently and is kept local.
+fixtures/live/
+
 data/

@@ -17,6 +17,19 @@ The API uses the following technologies:
 -   Railway.app for hosting
 -   Express for the server
 
+## Scraper diagnostics
+
+Configure a residential proxy in `.env` using `.env.example` as a guide. Both
+listing and event-detail requests use `PROXY_URL`.
+
+Run `npm run diagnose` to compare a direct request with the configured proxy.
+Run `npm run diagnose -- --save-fixtures` to retain successful listing and event
+HTML under `fixtures/live/` for selector debugging. Proxy credentials are never
+printed by the diagnostic.
+
+Timeout, retry count, and event-detail concurrency are configurable through
+`SCRAPE_TIMEOUT_MS`, `SCRAPE_RETRIES`, and `SCRAPE_CONCURRENCY`.
+
 ## Data
 
 ### /

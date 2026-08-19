@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "jest",
+    "test": "node --test",
+    "diagnose": "node scripts/diagnose-scraping.js",
     "start": "node index.js"
   },
   "keywords": [],
